@@ -1,0 +1,539 @@
+---
+title: "Grab some popcorn: Analysis of The Movie DataBase (TMDB)"
+author: "Suresh Karthik Balasundaram"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document:
+    code_folding: show
+
+theme: cayman
+---
+
+# {.tabset .tabset-fade}
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##1.Introduction
+
+Every year hundreds of movies get released but not all of them are successful. The aim of the project is to analyze the TMDB movie dataset which has details about the movies, their production cost and revenue generated along with rating inforamtion. We want to come up with insights by analyzing the dataset. 
+
+
+###Problem Statement
+
+As mentioned on the [Kaggle](https://www.kaggle.com/tmdb/tmdb-movie-metadata) website, the major question we are trying to answer here is what can we say about the success of a movie before it is released? Are there certain companies (Pixar?) that have found a consistent formula? Given that major films costing over $100 million to produce can still flop, this question is more important than ever to the industry. 
+
+
+###Analysis and Business Impact proposed
+
+We are trying to analyze the dataset to find answers to the questions posed in the problem statement. We will start with a univariate analysis and then move ahead with a mutivariate analysis to understand the impact of certain factors in determining the success of the movie. The success of a movie could be measured in terms of the following metrics:
+
+* **Return on Investment**: Which will be a measure of the Revenue generated
+* **Rating by Public**: Which will also take into account the number of votes posted
+
+
+##2.Packages Required
+
+To start with the data analysis, we have used the following R packages:
+
+* **readr :** To read the dataset which is in the csv format 
+* **jsonlite :** To extract the columns that are in json format in the dataset 
+* **tidyr :** To perform data cleaning operations
+* **dplyr :** To manipulate the dataset
+* **DT :** To display the cleaned dataset in a tabular format
+* **knitr :** To display a table of column names along with datatypes 
+* **ggplot2 :** To generate beautiful visualizations
+* **ggpubr :** To generate mutiple plots and arrange them in a single window
+* **lubridate :** To perform Date operations
+* **plotly :** To generate 3D plots
+* **kableExtra :** To specify the settings for the tables displayed
+
+Here we are checking if the package is installed on your PC. Else, dont worry, we are installing it or you!!
+
+```{r message = FALSE, warning = FALSE}
+
+#Checking if the package is installed on your PC. ELse installing it or you!!
+packages <- c("readr", "jsonlite","tidyr","dplyr","DT","knitr","ggplot2","ggpubr","lubridate","plotly")
+for (i in packages){
+if( i %in% rownames(installed.packages()) == FALSE) 
+{install.packages(i)
+  }
+}
+```
+Loading the required libraries.
+
+```{r message = FALSE, warning = FALSE}
+#Loading the required packages
+library(readr)
+library(jsonlite)
+library(tidyr)
+library(dplyr)
+library(DT)
+library(knitr)
+library(ggplot2)
+library(ggpubr)
+library(lubridate)
+library(plotly)
+library(kableExtra)
+
+```
+
+##3.Data Preparation {.tabset .tabset-fade}
+
+###3.1.Data Source
+
+####Original Source
+The dataset is obtained from [Kaggle](https://www.kaggle.com/tmdb/tmdb-movie-metadata/data). 
+
+
+####Hosted in Github
+We have downloaded the dataset from this source and hosted in our custom [GitHub profile](https://github.com/rengalv/Movies-Data-Analysis-Grab-a-Popcorn) for creating a robust source of data. This will make sure that we can even have mutiple versions of the data along with corresponding analysis making it easier for code sharing.
+
+
+####Data Description
+The TMDB dataset was generated from The Movie Database API. It has a set of columns that were collated to understand describe the success of movies. 
+
+* There are columns like budget and revnew whoch gives the monetary aspect of the movies. 
+* There are columns related to the votes, average rating etc.. which gives the perspective of what was the general reaction to the movies. 
+* Other details like when was the movie released, what was the genre of the movie, which was the production house, production country and what all languages did the movie get released are also provided. 
+
+All these details makes the dataset interesting from the perspective of doing an Exploratory Data Analysis to try generating insights.
+
+
+###3.2.Data Importing
+
+####Fetching the Data from GitHub
+We perform the data importing from the github profile where we have hosted the data. The url for the data is set to the variable `url` and the data is read into the object `df` . Then the column names of the dataset are examined are found to be as shown below.
+
+```{r message = FALSE, warning = FALSE}
+#URL to read the data from
+url <- "https://raw.githubusercontent.com/rengalv/Movies-Data-Analysis-Grab-a-Popcorn/master/tmdb_5000_movies.csv"
+
+#Reading the csv file from the URL
+movies <- read_csv(url,col_names = TRUE,na = "NA")
+
+#Preview of the data dimensions and column names
+dim(movies)
+
+#Examining the column names in the dataset
+colnames(movies)
+
+
+```
+
+
+####Looking at the structure of the Dataset
+
+When we examine the Structure of the dataset, we find that the columns can be in any of the following datatypes:
+
+* Interger
+* Numeric
+* Character
+* Date
+
+We also find that even though some columns have a class as `chr`, they are actually in JSON format which needs to be converted to columns with one of the base r datatypes.
+
+###3.3.Data Cleaning
+
+####Removing Duplicates
+The first thing we wanted to do was to remove the duplicate values from the dataset. We did this by checking if there were two rows in the dataset that had the same movie name.
+
+```{r message = FALSE, warning = FALSE}
+movies <- movies[!duplicated(movies$title), ]
+
+```
+
+The de-duplicated dataset has the following dimensions:
+```{r }
+dim(movies)
+
+```
+
+
+####Working with the JSON Format
+
+We notice from the dataset that it has columns with data in the JSON format. So, we need to bring those columns to the base datatypes in r so that we can perform analysis.
+
+Following are the columns found to be in JSON format:
+
+* Genres: id, name
+* Keywords: id, name
+* Production Companies: name, id
+* Production Countries: iso_3166_1, name
+* Spoken Languages: iso_639_1, name
+
+We worked on converting each of these columns into separate dataframes.
+
+Since the implementation was replicable for each of the columns in the JSON format, we wrote a function to implement the same. Finally we have 5 new data frames which can then be merged with our base `movies` dataset.
+
+#####**Function to convert the JSON column to a dataframe**
+```{r message = FALSE, warning = FALSE}
+#Takes in the dataframe and column name to be trnasformed
+json_to_df <- function(df, column){
+  column_1 <- df[apply(df[,column],1,nchar)>2,]  #Checks if there is an entry
+   
+  list_1 <- lapply(column_1[[column]], fromJSON) #Converts the JSON to a list
+  values <- data.frame(unlist(lapply(list_1, function(x) paste(x$name,collapse = ",")))) #Collapsing all the values of the list as a key value pair
+  
+  final_df <- cbind(column_1$id, column_1$title, values) #new data frame with the key and values a s columns
+  names(final_df)  <- c("id", "title", column)
+  return(final_df)
+  
+}
+```
+
+##### **Calling the json_to_df() to generate the dataframes for all the JSON Columns**
+
+```{r message = FALSE, warning = FALSE}
+genres_df <- json_to_df(movies, "genres")
+keywords_df <- json_to_df(movies, "keywords")
+prod_cntry_df <- json_to_df(movies, "production_countries")
+prod_cmpny_df <- json_to_df(movies, "production_companies")
+spoken_lang_df <- json_to_df(movies, "spoken_languages")
+
+```
+
+
+
+####Merging the dataset
+Now that we have created them as separate dataframes, we want to combine all these dataframes with the `movies` dataframe to get the final dataset which we will be used for the analysis going forward
+
+For that, we first remove the JSON columns present in the `movies` dataset and then combine the new columns we have created for all the JSON columns
+
+```{r warning = FALSE}
+#Subset the movies dataframe by removing the JSON columns
+movies_1 <- subset(movies, select =  -c(genres,keywords,production_companies, production_countries,spoken_languages))
+
+#Join the columns from all the generated dataframes from previous step
+movies_new <- movies_1 %>%
+  full_join(genres_df, by = c("id", "title")) %>%
+  full_join(keywords_df, by = c("id", "title")) %>%
+  full_join(prod_cntry_df, by = c("id", "title")) %>%
+  full_join(prod_cmpny_df, by = c("id", "title")) %>%
+  full_join(spoken_lang_df, by = c("id", "title"))
+
+#Have a look at the final dataset
+glimpse(movies_new)
+size <- dim(movies_new)
+```
+We find that there are `r size[1]` observations and `r size[2]` columns.
+
+####**Missing values**
+
+We wanted to check there were how many rows in the data set with complete values for all  the columns. 
+
+```{r message = FALSE, warning = FALSE}
+complete_data <- sum(complete.cases(movies_new))
+```
+
+We find that there are `r complete_data` rows with no missing data in the dataset. We did not remove any of the missing values for now. We are planning to look at each column separately and see if we can perform any imputations (if required) while performing the analysis.
+
+###3.4.Data Preview
+The table below is the preview of the final dataset. We have printed the first 100 rows of the dataset. 
+
+Each row corresponds to a movie and each column is a feature corresponding to the movie.
+
+```{r message = FALSE, warning = FALSE}
+movies_new <- select(movies_new, title, everything())
+datatable(movies_new , options = list(pageLength = 5, scrollX = "200px"))
+```
+
+###3.5.Summary of Data
+
+The final dataset after performing data cleaning has the following columns. The class of each of the column is also presented below.
+
+```{r message = FALSE, warning = FALSE}
+col <- data.frame(sapply(movies_new, class)) #Gettting the class of each column
+Row_names <- rownames(col) #Getting the row names which ae the columns of our dataset
+class <- col[,1] 
+
+Data_types <- cbind(Column = Row_names, Class = as.character(class)) 
+Data_types <- Data_types[2:nrow(Data_types),] #Removing the first entry alone because it is for the row number
+
+kable(Data_types) %>%
+  kable_styling(bootstrap_options = "striped")#Displays the table as shown below
+
+```
+
+##4.EDA {.tabset .tabset-fade}
+We have split our Exploratory Data Analysis into five parts:
+
+* Seaonality Analysis: When do movies generally get released in a year? Are there golden months for relases?
+* Analysis of User ratings: What is the distribution of ratings across al movies? Does rating and ROI(Return on Investment) have a relationship?
+* Impact of runtime on ROI: Is there a set of duration of movies that are giving better ROI's?
+* Impact of Social Media on Movie Popularity, number of voters and ratings
+* Cost Analysis: In terms of Budgets, Revenue and ROI of the movies
+
+
+###4.1.Seasonality Analysis
+
+####Considering only Million $$$ Movies
+
+Starting from now, we are considering only movies that had a budget and revenue of **more than $1M**.
+
+```{r message = FALSE, warning = FALSE}
+revenue_data<- movies_new %>%
+  filter(movies_new$budget >= 1000000 & movies_new$revenue >= 1000000) %>%
+  mutate(ROI = (revenue - budget)/budget)
+
+dim(revenue_data)
+```
+
+We find that there are 2998 Movies satisfying these conditions. 
+
+####Number of Movies Released Vs Month
+
+For this analysis we have considered only movies released after 1990.
+
+```{r message = FALSE, warning = FALSE}
+
+revenue_data %>%
+ filter(year(release_date) > 1990) %>%  #Filter movies released after 1990
+ group_by(year = year(release_date), month = month(release_date)) %>%
+ summarise(count = n()) %>% #Count of Movies released
+ ggplot(aes(year, as.factor(month)))+
+ geom_tile(aes(fill=count),colour="white")+
+ scale_fill_gradient(low="light blue",high = "dark blue") +
+ xlab("Year of Movie release")+
+ ylab("Month of Movie Release")+
+ ggtitle("Heat Map")
+
+```
+
+The infamous **Dump Months** of January and Febraury can be clearly seen from the above plot. That is, there will be least number of movies that get released during this time of the year.
+
+In contrast, we find that September has been the month when most movies have been released, This can be creditted to the begining of the school year when most friends get together after the vacation and might be the targeted audience for film makers.
+
+###4.2.User Ratings Analysis
+
+####Creating the required dataset
+
+We select a subset of the data for this analysis as shown below.
+
+```{r message = FALSE, warning = FALSE}
+m <- revenue_data %>%
+  select(title, runtime, revenue, ROI, vote_average) 
+dim(m)
+```
+####Distribution of IMDB ratings
+
+We have plotted the histogram of movie ratings to understand the pattern of number of movies across various ratings.
+
+```{r message = FALSE, warning = FALSE}
+ggplot(revenue_data, aes(vote_average)) +
+ geom_histogram(bins = 50) +
+ geom_vline(xintercept = mean(revenue_data$vote_average,na.rm = TRUE),colour = "blue") +
+ ylab("Movie Count") +
+ xlab("IMDB Rating") +
+ ggtitle("Histogram for IMDB ratings") +
+  annotate("text", label = "Mean IMDB rating",x = 6.2, y = 50, size = 3, colour = "yellow",angle=90)
+```
+
+We can see that the average IMDB rating is 6.3 and most of the movies fall within the imdb rating of 6 to 7. This also tells us that average quality movies are more in number compared to good quality(rating > 7) or bad quality(rating < 6) movies.
+
+#### Impact of Rating on ROI
+
+We have plotted the ratings of different movies against their ROI and tried to analyze if there is any pattern or relationship between them.
+
+```{r message = FALSE, warning = FALSE}
+m %>%
+  filter(vote_average >5 ) %>% #Filter to show the graph only for vote_average values greater than 5
+ ggplot(aes(x = vote_average, y = ROI)) +
+  geom_point(alpha = 0.5, col = "darkgreen") + 
+  theme(axis.text.x=element_text(hjust=1))+
+  ggtitle("ROI Vs avg_rating")+
+  xlab("rating ")+
+  ylab("") +
+  geom_smooth()
+
+```
+
+We can see that as the rating increase the ROI is increasing especially within the range of 7 - 8.5, we can see a significant rise in the ROI.
+
+###4.3.Runtime Analysis
+
+####Analysis of Movie runtime
+We have also tried to plot the run time against ROI to see if there are any interesting insights.
+
+```{r message = FALSE, warning = FALSE}
+
+#Plot for ROI Vs run time
+a <- ggplot(m, aes(x = runtime, y = ROI)) +
+  geom_point(alpha = 0.5, col = "darkgreen") + 
+  ggtitle("ROI Vs Runtime")+
+  xlab("Runtime (Minutes)")+
+  ylab("") +
+  geom_vline(xintercept = c(80,125),colour = c("blue","blue"))
+  
+#Zoomed Plot 
+b <- ggplot(m, aes(x = runtime, y = ROI)) +
+  geom_point(alpha = 0.5, col = "darkgreen") + 
+  ggtitle("Zoomed-in: 80 - 125 minutes runtime")+
+  xlab("Runtime (Minutes)")+
+  ylab("ROI") +
+  coord_cartesian(xlim = c(80, 125))
+
+#To create two plots in the same window
+ggarrange(a, b,  
+          labels = c("A", "B"),
+          ncol = 2, nrow = 1)
+
+```
+
+We can see from the plot in the left that there are many movies in the 80 to 120 minutes bucket with significant ROI. Hence we tried to zoom in to see the pattern in the left plot where you can clearly see there are quite a good number of movies with higher ROI.Thus if a production house wants to make a movie with a higher ROI, if the lenght of the movie could be between 80 to 125 minutes, there is a lot more chance of getting better ROI's.
+
+
+
+###4.4.Impact of Social Media
+
+####Vote Counts over the years
+
+IMDB rating systen started in 1990's but still the number of people who reviewed and rated movies had not significantly inclreased until mid 2000's. We wanted understand what could have been the major contributor for the grwith in the number of reviews and ratings across the globe ever since mid 2000's. The we found an interesting analysis as shown below.
+
+```{r message = FALSE, warning = FALSE}
+#Performing operations on Movies Vote Count over the years
+ movies_vote1 <- revenue_data %>%
+ select(release_date, vote_count) %>%
+ group_by(year(release_date)) %>%
+ summarise(count = sum(vote_count)) 
+
+ names(movies_vote1) <- c("date","vote_count")
+
+ ggplot(movies_vote1, aes(x = date, y = vote_count/1000)) +
+ geom_bar( stat = "identity") +
+ geom_vline(xintercept = c(1990,2004,2006),colour = c("orange","blue","red")) +
+ ylab("Vote count (in thousands)") +
+ xlab("Years") +
+ annotate("text", label = "Facebook",x = 2003, y = 160, size = 3, colour = "blue",angle=90)+
+ annotate("text", label = "IMDB",x = 1989, y = 160, size = 3, colour = "orange",angle=90)+
+ annotate("text", label = "Twitter",x = 2005, y = 160, size = 3, colour = "red",angle=90)
+```
+
+We find that social media platforms like Facebook and Twitter had started in the mid 2000's and ever since there has been an exponential growth in the number of reviews and rating for movies. It is quite surpiring to see how social media has influenced the entire movie rating system over the years.
+
+####Populatity over the years
+
+The next thing that we noticed was that even the popularity score for movies has increased exponentially over the past decade ever since the introduction of these social media platforms like Facebook and Twitter. The growth in the popularity index is exponential as shown in the analysis below.
+
+```{r message = FALSE, warning = FALSE}
+#Creating the required subset of data 
+movies_pop <- revenue_data %>%
+ select(release_date, popularity) %>%
+ filter(year(release_date) > 1980) %>%
+ group_by(year(release_date)) %>%
+ summarise(avg = mean(popularity)) 
+
+ names(movies_pop) <- c("date","popularity")
+
+ #generating the popularity Vs time plot
+ ggplot(movies_pop, aes(x = date, y = popularity)) +
+ geom_point() +
+ geom_smooth() + 
+ geom_vline(xintercept = c(1990,2004,2006),colour = c("orange","blue","red")) +
+ ylab("Mean Popularity Score") +
+ xlab("Years") +
+ annotate("text", label = "Facebook",x = 2003, y = 80, size = 3, colour = "blue",angle=90)+
+ annotate("text", label = "IMDB",x = 1989, y = 80, size = 3, colour = "orange",angle=90)+
+ annotate("text", label = "Twitter",x = 2005, y = 80, size = 3, colour = "red",angle=90)
+```
+
+
+
+###4.5.Cost Analysis 
+
+####Analysis of Budget and Revenue:
+The first thing that anyone would want to analyse given a movie dataset is to analyze the budget and revenue across all movies and to see if there are movies with exhorbitant budgets and revenues. 
+
+```{r message = FALSE, warning = FALSE}
+budget <- revenue_data %>%
+  select(title, budget) %>%
+  arrange(desc(budget)) %>%
+  head(15)
+
+x <- ggplot(budget, aes(x = reorder(title, -desc(budget)), y = budget/1000000)) +
+  geom_bar( stat = "identity")+ 
+  theme(axis.text.x=element_text(hjust=1))+
+  ggtitle("Movie Budgets")+
+  xlab("")+
+  ylab("Budget (in Millions)") + 
+  coord_flip()
+
+rev <- revenue_data %>%
+  select(title, revenue) %>%
+  arrange(desc(revenue)) %>%
+  head(15)
+
+y <- ggplot(rev, aes(x = (reorder(title, -desc(revenue))), y = revenue/1000000)) +
+  geom_bar( stat = "identity")+ 
+  theme(axis.text.x=element_text(hjust=1))+
+  ggtitle("Movie Revenues")+
+  xlab("")+
+  ylab("Revenue (in Millions)") + 
+  coord_flip() 
+
+ggarrange(x, y,
+          labels = c("A", "B"),
+          ncol = 1, nrow = 2)
+```
+
+We can see that the movies in the top 15 budget and revenue list are completely different except for one movie - 'The Dark Knight Rises' which triggers our interest to dwell further into analyze the ROI of movies with significant revenue or budget.
+
+####ROI Analysis
+
+We create a new metric to measure the success of the movie called the ROI. The metric is computed as follows:
+$$ROI = (Revenue - Budget)/Budget$$
+We then wanted to select only the movies with the top 10 ROI. We have the following results:
+```{r message = FALSE, warning = FALSE}
+m_roi <- revenue_data %>%
+  select(title, budget, revenue, ROI) %>%
+  arrange(desc(ROI)) %>%
+  head(15)
+
+ggplot(m_roi, aes(x = reorder(title, -desc(ROI)), y = ROI)) +
+  geom_bar( stat = "identity")+ 
+  theme(axis.text.x=element_text(hjust=1))+
+  ggtitle("Movie ROI")+
+  xlab("")+
+  ylab("ROI") + 
+  coord_flip()
+
+
+```
+
+We can clearly see that not even a single movie in the top 15 list of Revenue and Budget is present in the top 15 list of movies with higher ROIs which gives a clue to hypothesize that not all movies with high budget or high revenue end up with higher ROIs. 
+
+####Bigger Picture
+
+Finally, we also wanted to try out on presenting a 3D view of the movies that made a profit. We built the following 3D interactive visualization that would give information about all movies, their budget, revenue and also if the movie made a profit(green) or loss(red).
+
+```{r message = FALSE, warning = FALSE}
+
+plot_ly(revenue_data, z = ~vote_average, x = ~budget/1000000, y = ~revenue/1000000, 
+        color = ~(revenue > budget), colors = c('#00FF00', '#FF0000'),
+        size = I(3)) %>%
+  add_markers() %>%
+  layout(scene = list(xaxis = list(title = 'Budget(In Million Dollars'),
+                      yaxis = list(title = 'Revenue(In Million Dollars'),
+                      zaxis = list(title = 'IMDB Rating')),
+         title = "3D Plot: IMDB Rating vs Revenue vs Budget",
+         showlegend = FALSE)
+
+```
+
+We find that the rating for a particular movie need not be dependent on the budget of the movie or the revenue from the movie. There are a lot of movies that did not have a profit but still had a pretty high rating. This is evidently seen from thr 3D plot above.
+
+##5.Summary
+
+The exploratory analysis that we performed has provided us with a lot of insights about the TMDB dataset. We can see a brief summary of all the anlaysis and key take aways as below.
+
+
+1.    The number of movies getting released during January and February are less in number throughout the years. This is in line with the **Dump Months** effect that is prevelant in the movie industry
+2.    Most number of movies are getting release by September month, consistently across the years.
+3.    The average rating of the movies is 6.3 and most of the movies falls within the rating range of 6 to 7
+4.    ROI of the movies significantly increases with the increase in rating, especially from a rating value of 7 to 8.5.
+5.    ROI of the movies were significantly high for movies with 80 to 120 minutes of runtime. So it is better to make movies with runtimes between 80 and 120 in order to get better ROI's
+6.    Social media like Facebook and Twitter have played a prominent role in the exponential growth in the number of reviews and rating for movies in the past decade.
+7.    Social media also played a key role in the increase of movies popularity over past decade
+8.    Movies in the top 15 budget and revenue list are completely different except for one movie - 'The Dark Knight Rises'
+9.    Not even a single movie in the top 15 list of Revenue and Budget is present in the top 15 list of movies with higher ROIs which gives a clue to hypothesize that not all movies with high budget or high revenue end up with higher ROIs.
+10. On buidling the interactive visualization between profitable movies, their revenue and budgets, we find that the rating for a particular movie need not be dependent on the budget of the movie or the revenue from the movie. There are a lot of movies that did not have a profit but still had a pretty high rating.
